@@ -1,7 +1,7 @@
 require('dotenv').config();
 const express = require('express');
-const connectDB = require('./src/database');
-const bot = require('./src/bot');
+const connectDB = require('./database');
+const bot = require('./bot');
 
 const app = express();
 app.use(express.json());
@@ -85,4 +85,3 @@ const start = async () => {
 };
 
 start();
-
