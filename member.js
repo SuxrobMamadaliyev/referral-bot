@@ -2,32 +2,49 @@ const { Markup } = require('telegraf');
 const Chat = require('./Chat');
 const UserChat = require('./User');
 
-/**
- * Yangi a'zo guruhga qo'shilganda ishga tushadi.
- * chat_member yoki new_chat_members eventi orqali.
- */
+// Guruhga yangi a'zo xabarini yuborish (inline tugma bilan)
+const sendWelcomeMessage = async (ctx, chatId, userId, firstName, limit) => {
+  try {
+    const name = firstName || 'Foydalanuvchi';
+    await ctx.telegram.sendMessage(
+      chatId,
+      `👋 Xush kelibsiz, [${name}](tg://user?id=${userId})!\n\n` +
+      `🔒 Ushbu guruhda yozish uchun *${limit} ta odam* taklif qilishingiz kerak.\n\n` +
+      `⬇️ Taklif havolangizni olish uchun quyidagi tugmani bosing:`,
+      {
+        parse_mode: 'Markdown',
+        reply_markup: {
+          inline_keyboard: [[
+            {
+              text: '🔗 Taklif havolasini olish',
+              url: `https://t.me/${ctx.botInfo.username}?start=ref_${String(chatId).replace('-', 'M')}_${userId}`
+            }
+          ]]
+        }
+      }
+    );
+  } catch (e) {
+    console.error('Guruhga xabar yuborishda xato:', e.message);
+  }
+};
+
+// Yangi a'zo (new_chat_members event)
 const handleNewMember = async (ctx) => {
   const chatId = String(ctx.chat.id);
 
-  // Bu guruh botda ro'yxatdan o'tganmi?
   const chatConfig = await Chat.findOne({ chatId, isActive: true });
   if (!chatConfig) return;
 
-  // Yangi a'zolar ro'yxati
   const newMembers = ctx.message?.new_chat_members || [];
   if (newMembers.length === 0) return;
 
   for (const member of newMembers) {
-    // Botning o'zini cheklamaymiz
     if (member.is_bot) continue;
 
     const userId = String(member.id);
-
-    // Foydalanuvchi yozuvi mavjudmi?
     let userRecord = await UserChat.findOne({ userId, chatId });
 
     if (!userRecord) {
-      // Yangi foydalanuvchi — yaratish va restrict qilish
       userRecord = await UserChat.create({
         userId,
         chatId,
@@ -38,32 +55,16 @@ const handleNewMember = async (ctx) => {
         isRestricted: true
       });
 
-      // Foydalanuvchini restrict qilish
       await restrictUser(ctx, chatId, userId);
+      await sendWelcomeMessage(ctx, chatId, userId, member.first_name, chatConfig.referralLimit);
 
-      // Foydalanuvchiga xabar yuborish (bot guruhda xabar yuborishi)
-      try {
-        const limitText = chatConfig.referralLimit;
-        await ctx.reply(
-          `👋 Xush kelibsiz, [${member.first_name}](tg://user?id=${userId})!\n\n` +
-          `📌 Ushbu guruhda yozish uchun *${limitText} ta odam* taklif qilishingiz kerak.\n\n` +
-          `💡 Taklif havolangizni olish uchun /invite buyrug'ini bosing.`,
-          { parse_mode: 'Markdown' }
-        );
-      } catch (e) {
-        // Bot guruhda xabar yubora olmasa (kanal bo'lsa) — ignore
-      }
     } else if (userRecord.isRestricted) {
-      // Qayta kirgan, hali restrict
       await restrictUser(ctx, chatId, userId);
     }
-    // isRestricted === false bo'lsa — cheklov yo'q, hech narsa qilmaymiz
   }
 };
 
-/**
- * Bir foydalanuvchini restrict qilish (yoza olmaydi)
- */
+// Foydalanuvchini restrict qilish
 const restrictUser = async (ctx, chatId, userId) => {
   try {
     await ctx.telegram.restrictChatMember(chatId, userId, {
@@ -88,9 +89,7 @@ const restrictUser = async (ctx, chatId, userId) => {
   }
 };
 
-/**
- * Bir foydalanuvchidan restrict olib tashlash (yoza oladi)
- */
+// Restrict olib tashlash
 const unrestrictUser = async (ctx, chatId, userId) => {
   try {
     await ctx.telegram.restrictChatMember(chatId, userId, {
@@ -120,10 +119,7 @@ const unrestrictUser = async (ctx, chatId, userId) => {
   }
 };
 
-/**
- * chat_member_updated eventi: kimdir guruhga qo'shilganda (invite link orqali ham)
- * Bu event yanada ishonchli — new_chat_members bilan birgalikda ishlatiladi
- */
+// chat_member_updated eventi (invite link orqali qo'shilganda)
 const handleChatMemberUpdated = async (ctx) => {
   const update = ctx.chatMember;
   if (!update) return;
@@ -133,8 +129,6 @@ const handleChatMemberUpdated = async (ctx) => {
   const member = update.new_chat_member?.user;
 
   if (!member || member.is_bot) return;
-
-  // Faqat qo'shilgan a'zolar
   if (!['member', 'restricted'].includes(newStatus)) return;
 
   const chatConfig = await Chat.findOne({ chatId, isActive: true });
@@ -155,22 +149,21 @@ const handleChatMemberUpdated = async (ctx) => {
     });
 
     await restrictUser(ctx, chatId, userId);
+    await sendWelcomeMessage(ctx, chatId, userId, member.first_name, chatConfig.referralLimit);
+
   } else if (existing.isRestricted) {
     await restrictUser(ctx, chatId, userId);
   }
 
-  // Kim taklif qildi? (inviter)
+  // Kim taklif qildi?
   const inviterId = update.from ? String(update.from.id) : null;
   if (!inviterId || inviterId === userId) return;
 
-  // Inviter o'zini o'zi qo'shmagan bo'lsin
   const inviterRecord = await UserChat.findOne({ userId: inviterId, chatId });
   if (!inviterRecord) return;
 
-  // Allaqachon bu userId qo'shilganmi?
   if (inviterRecord.referredUsers.includes(userId)) return;
 
-  // Referral hisoblash
   const updatedInviter = await UserChat.findOneAndUpdate(
     { userId: inviterId, chatId },
     {
@@ -184,16 +177,15 @@ const handleChatMemberUpdated = async (ctx) => {
   if (updatedInviter.referralCount >= chatConfig.referralLimit && updatedInviter.isRestricted) {
     await unrestrictUser(ctx, chatId, inviterId);
 
-    // Inviterni tabriklash
     try {
       await ctx.telegram.sendMessage(
         inviterId,
         `🎉 *Tabriklaymiz!*\n\n` +
-        `Siz *"${chatConfig.title}"* guruhiga *${chatConfig.referralLimit} ta odam* qo'shdingiz!\n\n` +
+        `Siz *"${chatConfig.title}"* guruhiga *${chatConfig.referralLimit} ta odam* qo'shdingiz\\!\n\n` +
         `Endi guruhda erkin yozishingiz mumkin ✅`,
         { parse_mode: 'Markdown' }
       );
-    } catch (e) { /* Bot bilan suhbat boshlashmagan bo'lishi mumkin */ }
+    } catch (e) {}
   }
 };
 
