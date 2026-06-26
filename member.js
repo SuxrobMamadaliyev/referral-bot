@@ -1,7 +1,7 @@
 const Chat = require('./Chat');
 const UserChat = require('./User');
 
-// Guruhga xabar yuborish — inline tugma bilan
+// Guruhga xabar yuborish
 const sendWelcomeMessage = async (telegram, botUsername, chatId, userId, firstName, limit) => {
   try {
     const name = firstName || 'Foydalanuvchi';
@@ -26,11 +26,11 @@ const sendWelcomeMessage = async (telegram, botUsername, chatId, userId, firstNa
     );
     console.log(`✅ Guruhga xabar yuborildi: ${chatId} -> user ${userId}`);
   } catch (e) {
-    console.error(`❌ Guruhga xabar yuborishda xato (${chatId}):`, e.message);
+    console.error(`❌ Guruhga xabar yuborishda xato:`, e.message);
   }
 };
 
-// Foydalanuvchini restrict qilish
+// Restrict qilish
 const restrictUser = async (telegram, chatId, userId) => {
   try {
     await telegram.restrictChatMember(chatId, userId, {
@@ -52,7 +52,7 @@ const restrictUser = async (telegram, chatId, userId) => {
     });
     console.log(`🔒 Restricted: ${userId} in ${chatId}`);
   } catch (err) {
-    console.error(`❌ restrictChatMember xatosi (${userId}):`, err.message);
+    console.error(`❌ restrictChatMember xatosi:`, err.message);
   }
 };
 
@@ -83,11 +83,11 @@ const unrestrictUser = async (telegram, chatId, userId) => {
     );
     console.log(`✅ Unrestricted: ${userId} in ${chatId}`);
   } catch (err) {
-    console.error(`❌ unrestrictChatMember xatosi (${userId}):`, err.message);
+    console.error(`❌ unrestrictChatMember xatosi:`, err.message);
   }
 };
 
-// Yangi a'zoni qayta ishlash (umumiy funksiya)
+// Yangi a'zoni qayta ishlash
 const processNewMember = async (telegram, botInfo, member, chatId, chatConfig) => {
   if (member.is_bot) return;
 
@@ -106,18 +106,23 @@ const processNewMember = async (telegram, botInfo, member, chatId, chatConfig) =
     });
 
     await restrictUser(telegram, chatId, userId);
-    await sendWelcomeMessage(
-      telegram,
-      botInfo.username,
-      chatId,
-      userId,
-      member.first_name,
-      chatConfig.referralLimit
-    );
+    await sendWelcomeMessage(telegram, botInfo.username, chatId, userId, member.first_name, chatConfig.referralLimit);
 
   } else if (existing.isRestricted) {
     await restrictUser(telegram, chatId, userId);
   }
+};
+
+// Invite link name dan inviterId olish
+// Bot createChatInviteLink da name: "Ref_123456789" deb yaratgan
+const getInviterIdFromLink = (inviteLink) => {
+  if (!inviteLink) return null;
+  // invite_link object ichida name bo'ladi
+  const name = inviteLink.name || '';
+  if (name.startsWith('Ref_')) {
+    return name.replace('Ref_', '');
+  }
+  return null;
 };
 
 // new_chat_members eventi
@@ -134,7 +139,7 @@ const handleNewMember = async (ctx) => {
   }
 };
 
-// chat_member eventi (invite link orqali qo'shilganda)
+// chat_member eventi
 const handleChatMemberUpdated = async (ctx) => {
   const update = ctx.chatMember;
   if (!update) return;
@@ -143,7 +148,9 @@ const handleChatMemberUpdated = async (ctx) => {
   const newStatus = update.new_chat_member?.status;
   const member = update.new_chat_member?.user;
 
-  console.log(`📥 chat_member: ${member?.id}, status: ${newStatus}, chatId: ${chatId}`);
+  console.log(`📥 chat_member: userId=${member?.id}, status=${newStatus}, chatId=${chatId}`);
+  console.log(`📥 invite_link:`, JSON.stringify(update.invite_link));
+  console.log(`📥 from:`, update.from?.id);
 
   if (!member || member.is_bot) return;
   if (!['member', 'restricted'].includes(newStatus)) return;
@@ -151,16 +158,34 @@ const handleChatMemberUpdated = async (ctx) => {
   const chatConfig = await Chat.findOne({ chatId, isActive: true });
   if (!chatConfig) return;
 
+  const userId = String(member.id);
   await processNewMember(ctx.telegram, ctx.botInfo, member, chatId, chatConfig);
 
-  // Referral hisoblash
-  const userId = String(member.id);
-  const inviterId = update.from ? String(update.from.id) : null;
+  // InviterId aniqlash — invite_link.name dan
+  let inviterId = getInviterIdFromLink(update.invite_link);
+
+  // Agar invite_link dan topilmasa — from dan olish
+  if (!inviterId && update.from) {
+    inviterId = String(update.from.id);
+  }
+
+  console.log(`📊 inviterId: ${inviterId}, newUserId: ${userId}`);
+
   if (!inviterId || inviterId === userId) return;
 
+  // Bot o'zi taklif qilmasin
+  if (inviterId === String(ctx.botInfo.id)) return;
+
   const inviterRecord = await UserChat.findOne({ userId: inviterId, chatId });
-  if (!inviterRecord) return;
-  if (inviterRecord.referredUsers.includes(userId)) return;
+  if (!inviterRecord) {
+    console.log(`⚠️ Inviter DB da yo'q: ${inviterId}`);
+    return;
+  }
+
+  if (inviterRecord.referredUsers.includes(userId)) {
+    console.log(`⚠️ Bu user allaqachon hisoblangan: ${userId}`);
+    return;
+  }
 
   const updatedInviter = await UserChat.findOneAndUpdate(
     { userId: inviterId, chatId },
@@ -168,8 +193,9 @@ const handleChatMemberUpdated = async (ctx) => {
     { new: true }
   );
 
-  console.log(`📊 Referral: ${inviterId} -> ${updatedInviter.referralCount}/${chatConfig.referralLimit}`);
+  console.log(`📊 Referral hisoblandi: ${inviterId} -> ${updatedInviter.referralCount}/${chatConfig.referralLimit}`);
 
+  // Limit yetdimi?
   if (updatedInviter.referralCount >= chatConfig.referralLimit && updatedInviter.isRestricted) {
     await unrestrictUser(ctx.telegram, chatId, inviterId);
 
@@ -191,4 +217,3 @@ module.exports = {
   restrictUser: (ctx, chatId, userId) => restrictUser(ctx.telegram, chatId, userId),
   unrestrictUser: (ctx, chatId, userId) => unrestrictUser(ctx.telegram, chatId, userId)
 };
-
