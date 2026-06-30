@@ -80,7 +80,43 @@ const inviteCommand = async (ctx) => {
   // Foydalanuvchi uchun invite link yaratish
   try {
     const link = await ctx.telegram.createChatInviteLink(chatId, {
-      name: `Referral_${userId}`,
+      name: `Ref_${userId}`,
+      creates_join_request: false
+    });
+
+    await ctx.reply(
+      `🔗 *Sizning taklif havolangiz:*\n\n` +
+      `${link.invite_link}\n\n` +
+      `Bu havolani do'stlaringizga yuboring!\n` +
+      `Ular guruhga qo'shilganda sizning hisobingiz oshadi.`,
+      {
+        parse_mode: 'Markdown',
+        disable_web_page_preview: true
+      }
+    );
+  } catch (err) {
+    console.error('createChatInviteLink xatosi:', err.message);
+    await ctx.reply('❌ Havola yaratishda xato. Bot invite yaratish huquqiga ega emasdir.');
+  }
+};
+
+/**
+ * "🔗 Taklif Havolam" tugmasi — myRefsCommand natijasidagi inline tugma
+ */
+const getInviteAction = async (ctx) => {
+  await ctx.answerCbQuery();
+  const chatId = ctx.callbackQuery.data.split(':')[1];
+  const userId = String(ctx.from.id);
+
+  const chatConfig = await Chat.findOne({ chatId, isActive: true });
+  if (!chatConfig) return;
+
+  const userRecord = await UserChat.findOne({ userId, chatId });
+  if (!userRecord) return;
+
+  try {
+    const link = await ctx.telegram.createChatInviteLink(chatId, {
+      name: `Ref_${userId}`,
       creates_join_request: false
     });
 
@@ -209,6 +245,7 @@ const makeProgressBar = (current, total) => {
 module.exports = {
   myRefsCommand,
   inviteCommand,
+  getInviteAction,
   statsAction,
   myStatsAction
 };
