@@ -110,6 +110,8 @@ const processNewMember = async (telegram, botInfo, member, chatId, chatConfig) =
 
   } else if (existing.isRestricted) {
     await restrictUser(telegram, chatId, userId);
+    // Qaytib kirgan, hali ham cheklangan foydalanuvchiga eslatma + taklif link tugmasini qayta yuboramiz
+    await sendWelcomeMessage(telegram, botInfo.username, chatId, userId, member.first_name, chatConfig.referralLimit);
   }
 };
 
