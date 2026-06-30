@@ -28,6 +28,7 @@ const {
 const {
   myRefsCommand,
   inviteCommand,
+  getInviteAction,
   statsAction,
   myStatsAction
 } = require('./refs');
@@ -63,6 +64,7 @@ bot.action(/^recheck:/, (ctx) => recheckAction(ctx, bot));
 
 // Statistika
 bot.action(/^stats:/, statsAction);
+bot.action(/^get_invite:/, getInviteAction);
 
 // ═══════════════════════════════════════════
 // TEXT MESSAGES (Private chat setup flow)
