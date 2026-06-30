@@ -1,6 +1,7 @@
 const { Markup } = require('telegraf');
 const Chat = require('./Chat');
 const UserChat = require('./User');
+const { isAdmin } = require('./admin');
 
 const pendingSetup = new Map();
 
@@ -34,12 +35,15 @@ Men — *Multi Referral Bot*. Sizning guruh yoki kanalingizga odam qo'shish tizi
 *Boshlash uchun tugmani bosing 👇*
 `;
 
-  await ctx.replyWithMarkdown(welcomeText,
-    Markup.inlineKeyboard([
-      [Markup.button.callback('➕ Guruh/Kanal Ulash', 'setup_start')],
-      [Markup.button.callback('📋 Mening Guruhlarim', 'my_chats')],
-    ])
-  );
+  const mainButtons = [
+    [Markup.button.callback('➕ Guruh/Kanal Ulash', 'setup_start')],
+    [Markup.button.callback('📋 Mening Guruhlarim', 'my_chats')],
+  ];
+  if (isAdmin(userId)) {
+    mainButtons.push([Markup.button.callback('🛠 Admin Panel', 'admin_panel')]);
+  }
+
+  await ctx.replyWithMarkdown(welcomeText, Markup.inlineKeyboard(mainButtons));
 };
 
 // ref_ payload kelganda — foydalanuvchiga invite link berish
@@ -175,16 +179,22 @@ const myChatsAction = async (ctx) => {
 
 const backToStartAction = async (ctx) => {
   await ctx.answerCbQuery();
+  const userId = String(ctx.from.id);
   const firstName = ctx.from.first_name || 'Foydalanuvchi';
+
+  const mainButtons = [
+    [Markup.button.callback('➕ Guruh/Kanal Ulash', 'setup_start')],
+    [Markup.button.callback('📋 Mening Guruhlarim', 'my_chats')],
+  ];
+  if (isAdmin(userId)) {
+    mainButtons.push([Markup.button.callback('🛠 Admin Panel', 'admin_panel')]);
+  }
 
   await ctx.editMessageText(
     `👋 Salom, *${firstName}*!\n\nNima qilmoqchisiz?`,
     {
       parse_mode: 'Markdown',
-      ...Markup.inlineKeyboard([
-        [Markup.button.callback('➕ Guruh/Kanal Ulash', 'setup_start')],
-        [Markup.button.callback('📋 Mening Guruhlarim', 'my_chats')],
-      ])
+      ...Markup.inlineKeyboard(mainButtons)
     }
   );
 };
