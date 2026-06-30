@@ -7,7 +7,8 @@ const {
   setupStartAction,
   cancelSetupAction,
   myChatsAction,
-  backToStartAction
+  backToStartAction,
+  pendingSetup
 } = require('./start');
 
 const {
@@ -32,6 +33,14 @@ const {
   statsAction,
   myStatsAction
 } = require('./refs');
+
+const {
+  adminPanelAction,
+  adminStatsAction,
+  adminChatsAction,
+  adminBroadcastAction,
+  handleBroadcastMessage
+} = require('./admin');
 
 const bot = new Telegraf(process.env.BOT_TOKEN);
 
@@ -66,6 +75,12 @@ bot.action(/^recheck:/, (ctx) => recheckAction(ctx, bot));
 bot.action(/^stats:/, statsAction);
 bot.action(/^get_invite:/, getInviteAction);
 
+// Admin Panel
+bot.action('admin_panel', adminPanelAction);
+bot.action('admin_stats', adminStatsAction);
+bot.action(/^admin_chats:/, adminChatsAction);
+bot.action('admin_broadcast', (ctx) => adminBroadcastAction(ctx, pendingSetup));
+
 // ═══════════════════════════════════════════
 // TEXT MESSAGES (Private chat setup flow)
 // ═══════════════════════════════════════════
@@ -75,7 +90,8 @@ bot.on('text', async (ctx, next) => {
 
   // Setup oqimini tekshirish
   const handled = await handleSetupMessage(ctx, bot)
-    || await handleChangeLimitMessage(ctx);
+    || await handleChangeLimitMessage(ctx)
+    || await handleBroadcastMessage(ctx, pendingSetup);
 
   if (!handled) return next();
 });
