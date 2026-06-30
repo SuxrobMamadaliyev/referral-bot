@@ -1,5 +1,6 @@
 const { Markup } = require('telegraf');
 const Chat = require('./Chat');
+const UserChat = require('./User');
 const { pendingSetup } = require('./start');
 
 // Guruh/kanal ID tekshiruvi va bot admin ekanini verify qilish
@@ -30,6 +31,25 @@ const handleSetupMessage = async (ctx, bot) => {
 
       if (!['group', 'supergroup', 'channel'].includes(chat.type)) {
         await ctx.reply('❌ Bu oddiy chat. Faqat guruh yoki kanal ulash mumkin.');
+        return true;
+      }
+
+      // Faqat shu guruh/kanalning o'zi admin yoki egasi ulay oladi
+      let requesterMember;
+      try {
+        requesterMember = await bot.telegram.getChatMember(chat.id, ctx.from.id);
+      } catch (e) {
+        requesterMember = null;
+      }
+      const requesterIsAdmin = requesterMember && ['administrator', 'creator'].includes(requesterMember.status);
+
+      if (!requesterIsAdmin) {
+        await ctx.reply(
+          `❌ *Ruxsat yo'q!*\n\n` +
+          `Siz *"${chat.title}"* da admin yoki ega emassiz.\n` +
+          `Faqat guruh/kanalning o'zi admini ushbu guruhni botga ulashi mumkin.`,
+          { parse_mode: 'Markdown' }
+        );
         return true;
       }
 
@@ -138,6 +158,31 @@ const handleSetupMessage = async (ctx, bot) => {
   return false;
 };
 
+// Limit o'zgarganda, hali cheklangan (restricted) a'zolarga avtomatik xabar yuborish
+const notifyLimitChange = async (telegram, chat, newLimit) => {
+  const restrictedUsers = await UserChat.find({ chatId: chat.chatId, isRestricted: true });
+
+  for (const u of restrictedUsers) {
+    const done = u.referralCount;
+    const remaining = Math.max(0, newLimit - done);
+
+    try {
+      await telegram.sendMessage(
+        u.userId,
+        `🔔 *E'tibor bering!*\n\n` +
+        `*"${chat.title}"* guruhida yozish limiti o'zgartirildi.\n\n` +
+        `🎯 Yangi limit: *${newLimit} ta odam*\n` +
+        `👥 Sizning holatingiz: *${done}/${newLimit}*\n\n` +
+        `🔒 Yozish uchun yana *${remaining} ta odam* taklif qiling.`,
+        { parse_mode: 'Markdown' }
+      );
+    } catch (e) {
+      // Foydalanuvchi botni bloklagan bo'lishi mumkin — o'tkazib yuboramiz
+    }
+    await new Promise(resolve => setTimeout(resolve, 50));
+  }
+};
+
 // Guruhni boshqarish paneli
 const manageChatAction = async (ctx) => {
   await ctx.answerCbQuery();
@@ -205,15 +250,17 @@ const handleChangeLimitMessage = async (ctx) => {
     return true;
   }
 
-  await Chat.findOneAndUpdate(
+  const updatedChat = await Chat.findOneAndUpdate(
     { chatId: setup.chatId, ownerId: userId },
-    { referralLimit: newLimit }
+    { referralLimit: newLimit },
+    { new: true }
   );
 
   pendingSetup.delete(userId);
 
   await ctx.reply(
-    `✅ Limit muvaffaqiyatli *${newLimit} ta* ga o'zgartirildi!`,
+    `✅ Limit muvaffaqiyatli *${newLimit} ta* ga o'zgartirildi!\n\n` +
+    `🔔 Cheklangan a'zolarga xabar yuborilmoqda...`,
     {
       parse_mode: 'Markdown',
       ...Markup.inlineKeyboard([
@@ -221,6 +268,11 @@ const handleChangeLimitMessage = async (ctx) => {
       ])
     }
   );
+
+  if (updatedChat) {
+    await notifyLimitChange(ctx.telegram, updatedChat, newLimit);
+  }
+
   return true;
 };
 
